@@ -1,0 +1,674 @@
+#include <TFT_eSPI.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+//create the screen variable from the library
+TFT_eSPI tft = TFT_eSPI();
+
+// Set up variables for the cursor and counter. Cursor starts in the middle of the screen.
+float cursorX = 240.0;
+float cursorY = 160.0;
+
+#define buzzer 8
+
+// Define the size of the TFT display and size of Grid block
+int screenHeight = tft.width();
+int screenWidth = tft.height();
+
+// Define relevant thresholds
+int dropThreshold = 1500;
+
+// Define switches for button presses
+bool rotateButtonPressed = false;
+bool leftButtonPressed = false;
+bool rightButtonPressed = false;
+
+int score = 0;
+int highscore = 0;
+
+// Setting the joystick pins
+#define JOYSTICK_Y_PIN A1      // Define the x-axis
+#define JOYSTICK_X_PIN A0      // Define the y-axis
+#define JOYSTICK_BUTTON_PIN 2  // Define the joystick button
+#define RANDOM_PIN A2          // Define the random pin
+
+// Defining colors in 4-digit Hex
+#define BLACK 0x0000
+#define BLUE 0x001F
+#define RED 0xF800
+#define GREEN 0x07E0
+#define CYAN 0x07FF
+#define MAGENTA 0xF81F
+#define YELLOW 0xFFE0
+#define WHITE 0xFFFF
+#define DARKWHITE 0x3434
+#define ORANGE 0xFDA0
+
+// Define the number of ROWS and COLUMNS of Tetris grid
+#define ROWS 16           // Has to be divisible by 2
+#define COLUMNS ROWS / 2  // End value has to be divisible by 2
+#define BLOCK_SIZE screenHeight / ROWS
+#define BOARD_WIDTH COLUMNS *BOARD_SIZE
+#define BOARD_HEIGHT ROWS *BOARD_SIZE
+#define BOARD_START_X screenWidth / 3
+#define BOARD_START_Y 0
+#define DECK_OFFSET_X 350
+#define DECK_OFFSET_Y 100
+#define MIDDLE_OFFSET 2
+
+// Define the level variable for the game
+int level;
+
+volatile boolean buttonReleased = false;  // flag for button release
+
+// Define the Grid class
+class Grid {
+public:
+  // Define the color of the grid
+  int gridColor;
+
+  // Define the Constructor
+  Grid(uint16_t grid_color) {
+    this->gridColor = grid_color;
+  }
+
+  // Define fuction to display the grid
+  void display() {
+    for (int i = 0; i <= COLUMNS; i++) {
+      tft.drawLine(BOARD_START_X + (BLOCK_SIZE * i), BOARD_START_Y, BOARD_START_X + (BLOCK_SIZE * i), BOARD_START_Y + screenHeight, gridColor);
+    }
+    for (int i = 0; i <= ROWS; i++) {
+      tft.drawLine(BOARD_START_X, BOARD_START_Y + (BLOCK_SIZE * i), BOARD_START_X + (COLUMNS * BLOCK_SIZE), BOARD_START_Y + (BLOCK_SIZE * i), gridColor);
+    }
+  }
+};
+
+class Shape {
+private:
+  // Define 7 Tetris shapes
+  int t_shape[4][2] = { { 0 + MIDDLE_OFFSET, 0 }, { 1 + MIDDLE_OFFSET, 0 }, { 2 + MIDDLE_OFFSET, 0 }, { 1 + MIDDLE_OFFSET, 1 } };
+  int i_shape[4][2] = { { 0 + MIDDLE_OFFSET, 0 }, { 1 + MIDDLE_OFFSET, 0 }, { 2 + MIDDLE_OFFSET, 0 }, { 3 + MIDDLE_OFFSET, 0 } };
+  int o_shape[4][2] = { { 0 + MIDDLE_OFFSET, 0 }, { 1 + MIDDLE_OFFSET, 0 }, { 0 + MIDDLE_OFFSET, 1 }, { 1 + MIDDLE_OFFSET, 1 } };
+  int l_shape[4][2] = { { 0 + MIDDLE_OFFSET, 0 }, { 1 + MIDDLE_OFFSET, 0 }, { 2 + MIDDLE_OFFSET, 0 }, { 2 + MIDDLE_OFFSET, 1 } };
+  int j_shape[4][2] = { { 0 + MIDDLE_OFFSET, 0 }, { 1 + MIDDLE_OFFSET, 0 }, { 2 + MIDDLE_OFFSET, 0 }, { 0 + MIDDLE_OFFSET, 1 } };
+  int s_shape[4][2] = { { 0 + MIDDLE_OFFSET, 0 }, { 1 + MIDDLE_OFFSET, 0 }, { 1 + MIDDLE_OFFSET, 1 }, { 2 + MIDDLE_OFFSET, 1 } };
+  int z_shape[4][2] = { { 0 + MIDDLE_OFFSET, 1 }, { 1 + MIDDLE_OFFSET, 0 }, { 1 + MIDDLE_OFFSET, 1 }, { 2 + MIDDLE_OFFSET, 0 } };
+
+
+  int oS[4][2];
+
+public:
+  void rotate();
+  void moveDown(int level);
+  bool checkSide(String dir);
+  int downCounter;
+  int active_x, active_y, temporal_x, temporal_y;
+  bool isActive;
+  uint16_t color;
+  int activeShape[4][2];
+  int rotCount;
+  int moveRightCounter;
+  int moveLeftCounter;
+  int moveDownCounter;
+
+  Shape() {
+    for (int i = 0; i <= random(0, 7); i++) {
+      random(0, i);
+    }
+    switch (random(0, 7)) {
+      case 0:
+        memcpy(activeShape, o_shape, sizeof(activeShape));
+        color = RED;  //red
+        break;
+      case 1:
+        memcpy(activeShape, i_shape, sizeof(activeShape));
+        color = GREEN;  //green
+        break;
+      case 2:
+        memcpy(activeShape, t_shape, sizeof(activeShape));
+        color = BLUE;  //blue
+        break;
+      case 3:
+        memcpy(activeShape, l_shape, sizeof(activeShape));
+        color = YELLOW;  //yellow
+        break;
+      case 4:
+        memcpy(activeShape, j_shape, sizeof(activeShape));
+        color = CYAN;  //cyan
+        break;
+      case 5:
+        memcpy(activeShape, s_shape, sizeof(activeShape));
+        color = MAGENTA;  //magenta
+        break;
+      case 6:
+        memcpy(activeShape, z_shape, sizeof(activeShape));
+        color = ORANGE;  //orange
+        break;
+    }
+    downCounter = 1;
+    moveDownCounter = 1;
+    memcpy(oS, activeShape, sizeof(oS));
+    rotCount = 0;
+  }
+
+  // Define a function that displays the active shape
+  void display() {
+    for (int i = 0; i < 4; i++) {
+      tft.fillRect(BOARD_START_X + +(activeShape[i][0] * BLOCK_SIZE) + 1, BOARD_START_Y + (activeShape[i][1] * BLOCK_SIZE) + 1, (BLOCK_SIZE - 1), (BLOCK_SIZE - 1), color);
+    }
+  }
+  // Define a function to show the next block
+  void showOnDeck() {
+    tft.fillRect(DECK_OFFSET_X + (0 * BLOCK_SIZE), DECK_OFFSET_Y + (0 * BLOCK_SIZE), BLOCK_SIZE * 4, BLOCK_SIZE * 4, BLACK);
+    for (int i = 0; i < 4; i++) {
+      tft.fillRect(DECK_OFFSET_X - (MIDDLE_OFFSET * BLOCK_SIZE) + (activeShape[i][0] * BLOCK_SIZE), DECK_OFFSET_Y + (activeShape[i][1] * BLOCK_SIZE), BLOCK_SIZE - 1, BLOCK_SIZE - 1, color);
+    }
+    tft.setCursor(DECK_OFFSET_X, DECK_OFFSET_Y - 50);
+    tft.setTextSize(3);
+    tft.setTextColor(WHITE);
+    tft.println("NEXT");
+
+    tft.setCursor(screenWidth - DECK_OFFSET_X * 1.3, DECK_OFFSET_Y - 50);
+    tft.setTextSize(3);
+    tft.setTextColor(WHITE);
+    tft.println("SCORE");
+
+    tft.setCursor(screenWidth - DECK_OFFSET_X * 1.3, DECK_OFFSET_Y);
+    tft.setTextSize(3);
+    tft.fillRect(screenWidth - DECK_OFFSET_X * 1.3, DECK_OFFSET_Y, 50, 50, BLACK);
+    tft.setTextColor(WHITE);
+    tft.println(score);
+
+    tft.setCursor(screenWidth - DECK_OFFSET_X * 1.3, DECK_OFFSET_Y + 100);
+    tft.setTextSize(3);
+    tft.setTextColor(WHITE);
+    tft.println("LEVEL");
+
+    tft.setCursor(screenWidth - DECK_OFFSET_X * 1.3, DECK_OFFSET_Y + 150);
+    tft.setTextSize(3);
+    tft.fillRect(screenWidth - DECK_OFFSET_X * 1.3, DECK_OFFSET_Y + 150, 50, 50, BLACK);
+    tft.setTextColor(WHITE);
+    tft.println(level);
+  }
+  // Define a function to move the tetromino down
+
+
+  void moveShape(String dir) {
+    if (checkSide(dir)) {
+      for (int i = 0; i < 4; i++) {
+        tft.fillRect(BOARD_START_X + (activeShape[i][0] * BLOCK_SIZE) + 1, BOARD_START_Y + (activeShape[i][1] * BLOCK_SIZE) + 1, (BLOCK_SIZE - 1), (BLOCK_SIZE - 1), BLACK);  //Turn previous shape black
+      }
+      if (dir == "RIGHT") {
+
+        for (int i = 0; i < 4; i++) {
+          activeShape[i][0]++;
+          // display();  //Move right (x--coordinates ++)
+        }
+      }
+      if (dir == "LEFT") {
+        for (int i = 0; i < 4; i++) {
+          activeShape[i][0]--;
+          // display();  //Move left (x--coordinates --)
+        }
+      }
+      if (dir == "DOWN") {
+
+        for (int i = 0; i < 4; i++) {
+          activeShape[i][1]++;
+          // display();  //Move down (y--coordinates --)
+        }
+      }
+      for (int i = 0; i < 4; i++) {
+        tft.fillRect(BOARD_START_X + (activeShape[i][0] * BLOCK_SIZE) + 1, BOARD_START_Y + (activeShape[i][1] * BLOCK_SIZE) + 1, (BLOCK_SIZE - 1), (BLOCK_SIZE - 1), color);
+      }
+    }
+  }
+};
+
+class Background {
+private:
+  uint16_t hex_color = 0x0000;
+
+
+public:
+  bool gameOver();
+  int active_x, active_y;
+  int colors[COLUMNS][ROWS][1];
+
+
+  // Write the method to draw a rectangle FOR every x,y using the colors RGB
+  void display() {
+    for (int i = 0; i < COLUMNS; i++) {
+      for (int j = 0; j < ROWS; j++) {
+        hex_color = colors[i][j][0];
+        tft.fillRect(BOARD_START_X + (i * BLOCK_SIZE + 1), BOARD_START_Y + (j * BLOCK_SIZE + 1), (BLOCK_SIZE - 1), (BLOCK_SIZE - 1), hex_color);
+      }
+    }
+    for (int i = 0; i < ROWS; i++) {
+      if (checkLine(i)) {
+        removeLines(i);
+        display();
+      }
+    }
+  }
+
+  boolean checkLine(int row) {
+    for (int i = 0; i < COLUMNS; i++) {
+      if (colors[i][row][0] == BLACK) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void removeLines(int row) {
+    score += 10;
+    if (score % 50 == 0) {
+      level++;
+    }
+
+    int newBackground[COLUMNS][ROWS][1];
+    memcpy(newBackground, colors, sizeof(newBackground));
+    for (int r = row; r >= 1; r--) {
+      for (int j = 0; j < COLUMNS; j++) {
+
+        newBackground[j][r][0] = colors[j][r - 1][0];
+      }
+    }
+    memcpy(colors, newBackground, sizeof(colors));
+  }
+
+
+  void writeShape(Shape s) {
+    // get active_x and active_y of each block
+    for (int i = 0; i < 4; i++) {
+      active_x = s.activeShape[i][0];
+      active_y = s.activeShape[i][1];
+      // Write the colors of the shape into these x, y values
+      colors[active_x][active_y][0] = s.color;
+    }
+  }
+
+  void drawGameOverScreen() {
+    tft.fillScreen(BLACK);
+    tft.setCursor(screenWidth / 3, screenHeight / 3);
+    tft.setTextSize(3);
+    tft.setTextColor(WHITE);
+    tft.println("GAME OVER");
+
+    tft.setCursor(screenWidth / 5, screenHeight / 3 + 50);
+    tft.setTextSize(3);
+    tft.setTextColor(WHITE);
+    tft.print("Your score is: ");
+    tft.print(score);
+  }
+
+  void drawScore() {
+  }
+};
+
+Grid grid(DARKWHITE);
+Shape shape;
+Shape *onDeck = new Shape;
+Background background;
+
+void draw() {
+
+  background.display();
+  grid.display();
+  shape.display();
+  onDeck->showOnDeck();
+}
+
+void drawShape() {
+  background.writeShape(shape);
+  background.display();
+}
+
+void joystickPressed() {
+
+  long currentTimeRight;
+  long currentTimeLeft;
+
+  int JoyStickX = map(analogRead(JOYSTICK_X_PIN), 0, 1023, -10000, 10000);
+  int JoyStickY = map(analogRead(JOYSTICK_Y_PIN), 0, 1023, 10000, -10000);
+
+
+  if (JoyStickX > 8000 && !rightButtonPressed) {
+    shape.moveShape("RIGHT");
+    rightButtonPressed = true;
+    currentTimeRight = millis();
+  }
+  if (JoyStickX <= 200 || millis() - currentTimeRight == 150) {
+    rightButtonPressed = false;
+  }
+  if (JoyStickX < -8000 && !leftButtonPressed) {
+    shape.moveShape("LEFT");
+    leftButtonPressed = true;
+    currentTimeLeft = millis();
+  }
+  if (JoyStickX >= -264 || millis() - currentTimeLeft == 150) {
+    leftButtonPressed = false;
+  }
+  if (JoyStickY < -8000) {
+    if (shape.moveDownCounter % 100 == 0) {
+      shape.moveShape("DOWN");
+    }
+    shape.moveDownCounter++;
+  }
+}
+void checkBottom() {
+  if (!shape.isActive) {
+    drawShape(); // add a tone  here
+    tone(buzzer, 10000,500);
+    delay(200);
+    noTone(buzzer);
+    delay(200);
+    shape = *onDeck;
+    shape.isActive = true;
+    delete onDeck;
+    Shape *onDeck = new Shape();
+    onDeck->showOnDeck();
+  }
+}
+
+
+void rotate() {
+  int JoyStickY = map(analogRead(JOYSTICK_Y_PIN), 0, 1023, 10000, -10000);
+  if (JoyStickY > 8000 && !rotateButtonPressed) {
+    shape.rotate();
+    shape.rotCount++;
+    rotateButtonPressed = true;
+  }
+  if (JoyStickY <= 200) {
+    rotateButtonPressed = false;
+  }
+}
+
+bool checkBack() {
+  for (int i = 0; i < 4; i++) {
+    shape.active_x = shape.activeShape[i][0];
+    shape.active_y = shape.activeShape[i][1];
+
+    if (shape.active_x >= 0 && shape.active_x < COLUMNS && shape.active_y >= 0 && shape.active_y < ROWS) {
+      if (background.colors[shape.active_x][shape.active_y + 1][0] != 0x0000) {
+
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool tested = false;
+
+void setup() {
+  pinMode(buzzer, OUTPUT);
+  Serial.begin(115200);
+  tft.begin();  // Begin the tft_espi library
+  randomSeed(analogRead(RANDOM_PIN));
+  // pinMode(JOYSTICK_Y_PIN, INPUT);
+  // pinMode(JOYSTICK_BUTTON_PIN, INPUT_PULLUP);
+  // attachInterrupt(digitalPinToInterrupt(JOYSTICK_BUTTON_PIN), buttonReleasedISR, FALLING);
+
+  level = 1;
+  shape.isActive = true;
+  tft.setRotation(1);  // Landscape orientation
+  // tft.fillScreen(BLACK);
+
+  drawStartScreen();
+
+  draw();
+}
+
+void loop() {
+  while (!background.gameOver()) {
+    checkBottom();
+    joystickPressed();
+    rotate();
+    shape.moveDown(level);
+  }
+
+  level = 1;
+  background.drawGameOverScreen();
+  score = 0;
+  delay(5000);
+  // tft.fillScreen(BLACK);
+  shape.isActive = true;
+  for (int i = 0; i < COLUMNS; i++) {
+    for (int j = 0; j < ROWS; j++) {
+      background.colors[i][j][0] = BLACK;
+    }
+  }
+  drawStartScreen();
+
+  draw();
+}
+
+bool Background::gameOver() {
+  if (colors[0 + MIDDLE_OFFSET][0][0] != BLACK) {
+    return true;
+  }
+  return false;
+}
+
+bool Shape::checkSide(String dir) {
+
+  if (dir == "RIGHT") {
+    for (int i = 0; i < 4; i++) {
+      if (activeShape[i][0] > COLUMNS - 2) {
+        return false;
+      }
+      shape.active_x = shape.activeShape[i][0];
+      shape.active_y = shape.activeShape[i][1];
+      if (shape.active_x >= 0 && shape.active_x < COLUMNS && shape.active_y >= 0 && shape.active_y < ROWS) {
+        if (background.colors[shape.active_x + 1][shape.active_y][0] != 0x0000) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+  if (dir == "LEFT") {
+    for (int i = 0; i < 4; i++) {
+      if (activeShape[i][0] < 1) {
+        return false;
+      }
+      shape.active_x = shape.activeShape[i][0];
+      shape.active_y = shape.activeShape[i][1];
+      if (shape.active_x >= 0 && shape.active_x < COLUMNS && shape.active_y >= 0 && shape.active_y < ROWS) {
+        if (background.colors[shape.active_x - 1][shape.active_y][0] != 0x0000) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+  if (dir == "DOWN") {
+
+    for (int i = 0; i < 4; i++) {
+      if (activeShape[i][1] > ROWS - 2) {
+        isActive = false;
+        return false;
+      }
+
+      if (!checkBack()) {
+        shape.isActive = false;
+        return false;
+      }
+    }
+    return true;
+  }
+}
+void Shape::moveDown(int level) {
+  // Compare the counter with the threshold. This determines the frequency of drop
+  if (shape.downCounter % (dropThreshold / level) == 0) {
+    shape.moveShape("DOWN");
+  }
+  shape.downCounter++;
+}
+
+void Shape::rotate() {
+  // Number 1
+  // Define boolean that activates when at right edge
+  bool moveLeft = false;
+  bool moveRight = false;
+  bool moveUp = false;
+  int rotated[4][2];
+  int rot[4][2];
+
+  if (rotCount % 4 == 0) {
+    for (int i = 0; i < 4; i++) {
+      rotated[i][0] = oS[i][1] - activeShape[1][0];
+      rotated[i][1] = -oS[i][0] - activeShape[1][1];
+    }
+  } else if (rotCount % 4 == 1) {
+    for (int i = 0; i < 4; i++) {
+      rotated[i][0] = -oS[i][0] - activeShape[1][0];
+      rotated[i][1] = -oS[i][1] - activeShape[1][1];
+    }
+  } else if (rotCount % 4 == 2) {
+    for (int i = 0; i < 4; i++) {
+      rotated[i][0] = -oS[i][1] - activeShape[1][0];
+      rotated[i][1] = oS[i][0] - activeShape[1][1];
+    }
+  } else if (rotCount % 4 == 3) {
+    for (int i = 0; i < 4; i++) {
+      rotated[i][0] = oS[i][0] - activeShape[1][0];
+      rotated[i][1] = oS[i][1] - activeShape[1][1];
+    }
+  }
+
+  memcpy(rot, rotated, sizeof(rot));
+
+  if (rotCount % 4 == 0) {
+    for (int i = 0; i < 4; i++) {
+      rotated[i][0] = oS[i][1] - rot[1][0];
+      rotated[i][1] = -oS[i][0] - rot[1][1];
+    }
+  } else if (rotCount % 4 == 1) {
+    for (int i = 0; i < 4; i++) {
+      rotated[i][0] = -oS[i][0] - rot[1][0];
+      rotated[i][1] = -oS[i][1] - rot[1][1];
+    }
+  } else if (rotCount % 4 == 2) {
+    for (int i = 0; i < 4; i++) {
+      rotated[i][0] = -oS[i][1] - rot[1][0];
+      rotated[i][1] = oS[i][0] - rot[1][1];
+    }
+  } else if (rotCount % 4 == 3) {
+    for (int i = 0; i < 4; i++) {
+      rotated[i][0] = oS[i][0] - rot[1][0];
+      rotated[i][1] = oS[i][1] - rot[1][1];
+    }
+  }
+
+  for (int i = 0; i < 4; i++) {
+    temporal_x = rotated[i][0];
+    temporal_y = rotated[i][1];
+    if (temporal_x >= 0 && temporal_x < COLUMNS && temporal_y >= 0 && temporal_y < ROWS) {
+      if (background.colors[temporal_x][temporal_y][0] != 0x0000) {
+        return;
+      }
+    }
+  }
+
+  for (int i = 0; i < 4; i++) {
+    tft.fillRect(BOARD_START_X + (activeShape[i][0] * BLOCK_SIZE) + 1, BOARD_START_Y + (activeShape[i][1] * BLOCK_SIZE) + 1, (BLOCK_SIZE - 1), (BLOCK_SIZE - 1), BLACK);
+  }
+
+  memcpy(activeShape, rotated, sizeof(activeShape));
+  for (int i = 0; i < 4; i++) {
+    if (activeShape[i][0] > COLUMNS - 1) {
+      moveLeft = true;
+    }
+  }
+  for (int i = 0; i < 4; i++) {
+    if (activeShape[i][0] < 0) {
+      moveRight = true;
+    }
+  }
+  for (int i = 0; i < 4; i++) {
+    if (activeShape[i][1] > ROWS - 1) {
+      moveUp = true;
+    }
+  }
+  while (moveLeft) {
+    for (int i = 0; i < 4; i++) {
+      activeShape[i][0] -= 1;
+    }
+    for (int i = 0; i < 4; i++) {
+      if (activeShape[i][0] > COLUMNS - 1) {
+        moveLeft = true;
+        continue;
+      } else {
+        moveLeft = false;
+        // break;
+      }
+    }
+  }
+  while (moveRight) {
+    for (int i = 0; i < 4; i++) {
+      activeShape[i][0] += 1;
+    }
+    for (int i = 0; i < 4; i++) {
+      if (activeShape[i][0] < 0) {
+        moveRight = true;
+        continue;
+      } else {
+        moveRight = false;
+        // break;
+      }
+    }
+  }
+  while (moveUp) {
+    for (int i = 0; i < 4; i++) {
+      activeShape[i][1] -= 1;
+    }
+    for (int i = 0; i < 4; i++) {
+      if (activeShape[i][1] > ROWS - 1) {
+        moveUp = true;
+        continue;
+      } else {
+        moveUp = false;
+        // break;
+      }
+    }
+  }
+
+  for (int i = 0; i < 4; i++) {
+    tft.fillRect(BOARD_START_X + (activeShape[i][0] * BLOCK_SIZE) + 1, BOARD_START_Y + (activeShape[i][1] * BLOCK_SIZE) + 1, (BLOCK_SIZE - 1), (BLOCK_SIZE - 1), color);
+  }
+}
+
+// void buttonReleasedISR() {
+//   buttonReleased = true;
+// }
+
+int move_rect(int start) {
+  int end_position;
+  for (int i = start; i < start + 20; i++) {
+    tft.drawFastVLine(i, 0, 20, BLACK);
+    tft.drawFastVLine(20 + i, 0, 20, WHITE);
+    delay(10);
+  }
+  delay(1000);
+  end_position = 0;
+  return end_position;
+}
+
+void drawStartScreen() {
+  tft.fillScreen(BLACK);                                             // set the background color
+  tft.drawRect(screenWidth / 5, screenHeight / 3, 300, 150, WHITE);  // draw a rectangle
+  tft.setTextSize(4);
+  tft.setCursor(screenWidth / 4, screenHeight / 2);
+  tft.print("START GAME");
+
+  while (digitalRead(JOYSTICK_BUTTON_PIN) != 1) {
+    delay(100);
+  }
+
+  tft.fillScreen(BLACK);
+}
